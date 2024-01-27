@@ -11,7 +11,8 @@ const io = require("socket.io")(server);
 app.use(express.static("public"));
 
 app.get("/", (req, res) => {
-  res.sendFile(__dirname + "/public/index.html");
+  // res.sendFile(__dirname + "/public/index.html");
+  res.send("Hello Socket.io");
 });
 
 let connectedPeers = [];
