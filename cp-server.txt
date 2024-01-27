@@ -1,0 +1,295 @@
+const express = require('express');
+
+const next = require('next');
+const http = require('http');  ////// added
+// Disabled for unnecessary logs - Initialize only for production logs
+const helmet = require('helmet');
+const cors = require('cors');
+const path = require('path');
+const compression = require('compression');
+const formidable = require('formidable');
+// const nextI18NextMiddleware = require('next-i18next/middleware').default;
+// const nextI18next = require('./settings/i18n');
+const {
+  onError,
+  defaultErrorHandler,
+  uncaughtExceptionMonitorHandler,
+  unhandledRejectionHandler,
+  warningExceptionHandler,
+} = require('./settings/server-error-handlers');
+const appleAppSiteAssociation = require('./settings/apple-app-site-association')
+const { legacyRedirects } = require('./settings/server-redirects');
+const {generateSitemap} = require('./settings/sitemap');
+// const { purgeCloudflareCache } = require('./shared/third-party-functions');
+
+const port = process.env.SERVICE_PORT || 3000;
+const app = next({ dev: process.env.NODE_ENV === 'development' });
+const handle = app.getRequestHandler();
+
+// const server = express();
+// const httpServer = http.createServer(server);
+
+
+// const app = express();
+// const server = http.createServer(app);
+// const io = require("socket.io")(server);
+
+// app.use(express.static("public"));
+
+(async () => {
+  console.log(`> Npm memory load at MAX_OLD_SPACE_SIZE=${process.env.MAX_OLD_SPACE_SIZE}`); // eslint-disable-line no-console
+  await app.prepare();
+
+  // ////////////// start
+  const server = express();
+  const httpServer = http.createServer(server);
+  const io = require("socket.io")(httpServer);
+  // const server = require('http').createServer(express);
+
+  // const io = require('socket.io')(http.createServer(server));
+
+  let connectedPeers = []; /// end
+  // server.use(nextI18NextMiddleware(nextI18next));
+  server.use(helmet());
+  server.use(compression());
+  server.use(cors({
+    credentials: true,
+    origin: [process.env.FLINKS_IFRAME_URL, 'https://api.wisecapitals.com'],
+  }));
+
+  // Form data params
+  server.use((req, res, next) => {
+    const form = formidable();
+    form.parse(req, (err, fields) => {
+      if (!err) req.body = fields;
+      next();
+    });
+  });
+
+  server.on('error', onError);
+  process.on('error', onError);
+  process.on('unhandledRejection', unhandledRejectionHandler);
+  // It should catch fatal errors not handled by anywhere.
+  process.on('uncaughtExceptionMonitor', uncaughtExceptionMonitorHandler);
+  process.on('warning', warningExceptionHandler);
+
+  // Redirects for Website
+  let websiteRoutes = [
+  //   'about',
+  //   'careers',
+   'drone',
+   'compare-transfer-rates',
+  //   'our-fees',
+  //   'bussiness',
+  //   'referrals',
+  //   'verification',
+  //   'terms-and-conditions',
+  //   'security',
+  //   'how-to-pay',
+  //   'privacy-policy',
+  //   'full-stack-developer',
+  //   'qa-automation-engineer',
+  //   'send-money-to-india',
+  //   'send-money-to-philippines',
+  //   'send-money-to-sri-lanka',
+  ];
+  websiteRoutes.forEach(route => {
+    server.get(`/${route}`, (req, res) => {
+      const mergedQuery = Object.assign({}, req.query, req.params);
+      app.render(req, res, `/_website/${route}`, mergedQuery);
+    });
+  });
+
+  server.get('/mobile-apps', (req, res) => {
+    app.render(req, res, '/services/mobile-apps', req.params);
+  });
+
+  server.get('/refer/:username', (req, res) => {
+    app.render(req, res, '/signup', req.params);
+  });
+
+  // Setup redirections from old portal urls
+  legacyRedirects.forEach(({ from, to, type = 301, method = 'get' }) => {
+    server[method](from, (req, res) => {
+      res.redirect(type, to);
+    });
+  });
+
+
+  // server.get('/currency-converter/convert-cad-to-[A-Z][A-Z][A-Z]', (req, res) => {
+  //   const type = 301;
+  //   if (req.originalUrl.toLowerCase() != req.originalUrl) {
+  //     const to = req.originalUrl.toLowerCase();
+  //     res.redirect(type, to);
+  //   } else {
+  //     handle(req, res)
+  //   }
+  // });
+
+  // server.get('/transfer-money-to-*', (req, res) => {
+  //   const type = 301;
+  //   if (req.originalUrl.toLowerCase() != req.originalUrl) {
+  //     const to = req.originalUrl.toLowerCase();
+  //     res.redirect(type, to);
+  //   } else {
+  //     handle(req, res)
+  //   }
+  // });
+
+  // server.get('/send-money-to-*', (req, res) => {
+  //   const type = 301;
+  //   if (req.originalUrl.toLowerCase() != req.originalUrl) {
+  //     const to = req.originalUrl.toLowerCase();
+  //     res.redirect(type, to);
+  //   } else {
+  //     handle(req, res)
+  //   }
+  // });
+
+  // server.get('/currency-exchange', (req, res) => {
+  //   type = 301;
+  //   if (req.originalUrl.toLowerCase() != req.originalUrl) {
+  //     to = req.originalUrl.toLowerCase();
+  //     res.redirect(type, to);
+  //   } else {
+  //     handle(req, res)
+  //   }
+  // });
+
+  server.get('/robots.txt', (req, res) =>
+    res.sendFile(path.join(__dirname, '../public', 'robots.txt'))
+  );
+
+  [
+    '/sitemap.xml',
+    '/sitemap-index.xml',
+    '/sitemap-blog.xml',
+    '/sitemap-help.xml',
+    '/sitemap-assets.xml',
+    '/sitemap-currency.xml',
+    //'/sitemap-language.xml',
+    '/sitemap-news.xml',
+  ].forEach(URL => server.get(URL, generateSitemap))
+
+  server.get('/apple-app-site-association', (req, res) => res.json(appleAppSiteAssociation));
+  
+  server.all('*', (req, res) => handle(req, res));
+
+  server.use(defaultErrorHandler);
+
+  server.use(express.static(path.join(__dirname, "public")));
+
+
+
+
+  // server.use(express.static(path.join(__dirname, "public")));
+
+server.get("/", (req, res) => {
+  res.sendFile(__dirname + "/public/screen.html");
+});
+
+
+setTimeout(() => {
+
+  io.on("connection", (socket) => {
+    const socketId = socket.id;
+    // const socketId = '36d7690b-1931-467a-b8f0-6977c242a2dc';
+    ////////////////////////
+  
+    connectedPeers.push(socketId);
+  
+    socket.emit("your_uuid", { id: socketId }); 
+    ///////////////////
+  
+    socket.on("pre-offer", (data) => {
+      // console.log("pre-offer-came");
+      const { calleePersonalCode, callType } = data;
+  
+      console.log('calleePersonalCode', calleePersonalCode);
+      console.log('connectedPeers', connectedPeers);
+  
+      const connectedPeer = connectedPeers.find(
+        (peerSocketId) => peerSocketId === calleePersonalCode
+      );
+  
+      console.log(connectedPeer);
+  
+      if (connectedPeer) {
+        const data = {
+          callerSocketId: socketId,
+          callType,
+        };
+        
+        io.to(calleePersonalCode).emit("pre-offer", data);
+      } else {
+        const data = {
+          preOfferAnswer: "CALLEE_NOT_FOUND",
+        };
+        io.to(socketId).emit("pre-offer-answer", data);
+      }
+    });
+  
+    socket.on("pre-offer-answer", (data) => {
+  
+      // console.log('pre-offer-answer-came', data)
+      const { callerSocketId } = data;
+  
+      // console.log("pre-offer-answer-came", callerSocketId);
+  
+      const connectedPeer = connectedPeers.find(
+        (peerSocketId) => peerSocketId === callerSocketId
+      );
+  
+      if (connectedPeer) {
+        io.to(data.callerSocketId).emit("pre-offer-answer", data);
+      }
+    });
+  
+    socket.on('user-hanged-up', (data) => {
+      const { connectedUserSocketId } = data;
+  
+      const connectedPeer = connectedPeers.find(
+        (peerSocketId) => peerSocketId === connectedUserSocketId
+      );
+  
+      if (connectedPeer) {
+        io.close();
+      }
+    });
+  
+    socket.on("webRTC-signaling", (data) => {
+      const { connectedUserSocketId } = data;
+  
+      // console.log('webRTC-signaling', connectedUserSocketId);
+  
+      const connectedPeer = connectedPeers.find(
+        (peerSocketId) => peerSocketId === connectedUserSocketId
+      );
+  
+      if (connectedPeer) {
+        io.to(connectedUserSocketId).emit("webRTC-signaling", data);
+      }
+  
+      // console.log('werbRTC-signaling', data);
+    });
+  
+    socket.on("disconnect", () => {
+      console.log("user disconnected");
+  
+      const newConnectedPeers = connectedPeers.filter(
+        (peerSocketId) => peerSocketId !== socketId
+      );
+  
+      connectedPeers = newConnectedPeers;
+      console.log(connectedPeers);
+    });
+  });
+  
+}, 1000);
+
+
+  await httpServer.listen(port);
+  console.log(`> Ready on http://localhost:${port}`); // eslint-disable-line no-console
+  // if (process.env.NODE_ENV !== 'development') purgeCloudflareCache();
+})();
+
